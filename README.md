@@ -2,6 +2,15 @@
 
 [⭐️ **OPEN THE SCREENSAVER** ⭐️](https://cu-dbmi.github.io/screensaver) and fullscreen your browser!
 
+### Controls
+
+|                           |             |
+|---------------------------|-------------|
+| Click/touch + drag        | Rotate view |
+| Scroll/pinch              | Zoom view   |
+| Click + shift/ctrl + drag | Pan view    |
+| Double click              | Reset view  |
+
 ### Add text
 
 Add text to the visualization by adding a `text` parameter to the URL.
