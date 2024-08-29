@@ -1,0 +1,653 @@
+<html>
+  <head>
+    <script
+      src="https://unpkg.com/gsap@3.12.5/dist/gsap.min.js"
+      crossorigin="anonymous"
+    ></script>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.153.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.153.0/examples/jsm/"
+        }
+      }
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      * {
+        box-sizing: border-box;
+        font-family: "Lato", sans-serif;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      #canvas {
+        position: absolute;
+        inset: 0;
+        width: calc(100vw) !important;
+        height: calc(100vh) !important;
+      }
+
+      #overlay {
+        display: flex;
+        flex-direction: column;
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: 100%;
+        max-width: 400px;
+        padding: 20px;
+        pointer-events: none;
+      }
+
+      #overlay svg {
+        width: 100%;
+        fill: white;
+      }
+    </style>
+  </head>
+
+  <body>
+    <canvas id="canvas"></canvas>
+
+    <div id="overlay"></div>
+
+    <script type="module">
+      import {
+        AmbientLight,
+        ArrowHelper,
+        BackSide,
+        Box3,
+        BufferAttribute,
+        BufferGeometry,
+        Color,
+        DoubleSide,
+        DynamicDrawUsage,
+        Group,
+        HemisphereLight,
+        IcosahedronGeometry,
+        InstancedMesh,
+        Line,
+        LineBasicMaterial,
+        Matrix4,
+        Mesh,
+        MeshBasicMaterial,
+        Object3D,
+        PerspectiveCamera,
+        PointLight,
+        Quaternion,
+        Raycaster,
+        Scene,
+        SphereGeometry,
+        Vector2,
+        Vector3,
+        WebGLRenderer,
+      } from "three";
+      import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+      import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+      import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
+      import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+      import { MeshSurfaceSampler } from "three/addons/math/MeshSurfaceSampler.js";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+      import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+      import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+      import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+      import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+
+      // settings
+      const shapeFiles = ["brain.glb", "dna.glb", "flask.glb"]; // low-poly, small 3d models
+      const cameraFov = 60; // camera field of view
+      const cameraDist = 3; // camera dist from origin
+      const spinDuration = 30; // scene spin duration in sec
+      const shapeDuration = 3; // morph between model shapes every this many sec
+      const pointMax = 1000; // max number of points to sample from each model mesh
+      const pointPlaceTries = 10; // times to try sampling point far enough away from other points
+      const pointSize = 0.005; // radius of point
+      const pointDetail = 0; // geometry detail of each point (int)
+      const linkDist = 0.1; // create link between points closer than this
+      const colorDuration = 1; // duration of each color in sec
+      const colorStagger = 1; // amount of color change stagger
+      const highlightDuration = 0.25; // duration of highlight animation in sec
+      const highlightBulge = 1.5; // amount of scale increase for highlight animation
+      const bloom = 0.35; // amount of bloom effect
+
+      // color palette
+      const black = new Color("#020617");
+      const purple = new Color("#8b5cf6");
+      const blue = new Color("#0ea5e9");
+      const green = new Color("#14b8a6");
+      const orange = new Color("#fed7aa");
+      const red = new Color("#f43f5e");
+
+      // elements
+      const canvas = document.querySelector("#canvas");
+      const overlay = document.querySelector("#overlay");
+
+      // fit svg to contents after delay
+      const fitSvg = (svg, delay) =>
+        window.setTimeout(() => {
+          const { x, y, width, height } = svg.getBBox();
+          svg.setAttribute("viewBox", [x, y, width, height].join(" "));
+        }, delay);
+
+      // create text overlay
+      const lines = (
+        new URL(window.location.href).searchParams.get("text") ?? ""
+      )
+        ?.split("\\n")
+        ?.map((line) => line.trim());
+
+      const ns = "http://www.w3.org/2000/svg";
+      for (const line of lines) {
+        const svg = document.createElementNS(ns, "svg");
+        const text = document.createElementNS(ns, "text");
+        text.innerHTML = line;
+        svg.append(text);
+        overlay.append(svg);
+        // fit a few times until bbox settles
+        fitSvg(svg, 0);
+        fitSvg(svg, 1000);
+        fitSvg(svg, 2000);
+      }
+
+      // main three.js objects
+      const renderer = new WebGLRenderer({ canvas, alpha: true });
+      const scene = new Scene();
+      const camera = new PerspectiveCamera(
+        cameraFov,
+        1,
+        cameraDist / 5,
+        cameraDist * 5
+      );
+      const controls = new OrbitControls(camera, renderer.domElement);
+
+      // post processing effects
+      const renderPass = new RenderPass(scene, camera);
+      const bloomPass = new UnrealBloomPass(
+        new Vector2(canvas.clientWidth, canvas.clientHeight)
+      );
+      bloomPass.threshold = 0;
+      bloomPass.radius = 250 * pointSize;
+      bloomPass.strength = bloom;
+      const outputPass = new OutputPass();
+      const composer = new EffectComposer(renderer);
+      composer.addPass(renderPass);
+      composer.addPass(bloomPass);
+      composer.addPass(outputPass);
+
+      // data objects
+      let shapes = { points: [], links: [] };
+      let points = [];
+      let pointCount = 0;
+      let pointObject = new Object3D();
+      let pointHighlights = [];
+      let links = [];
+      let linkCount = 0;
+      let linkObject = new Object3D();
+      let linkHighlights = [];
+
+      // load models, calculate points and links
+      const loadShapes = async () => {
+        // 3d model loader
+        const loader = new GLTFLoader();
+
+        // shapes of points and links
+        shapes = (
+          await Promise.all(
+            shapeFiles.map(
+              (filename) =>
+                // load 3d model data
+                new Promise((resolve) => loader.load(filename, resolve))
+            )
+          )
+        ).map((model, index) => {
+          // center and scale model into -1 to 1 range bbox
+          const box = new Box3().setFromObject(model.scene);
+          const scale =
+            2 / Math.max(...Object.values(box.getSize(new Vector3())));
+          model.scene.scale.setScalar(scale);
+          const position = box
+            .getCenter(new Vector3())
+            .negate()
+            .multiplyScalar(scale);
+          model.scene.position.set(...position.toArray());
+
+          // get random points on surfaces of model
+          const points = [];
+          for (const mesh of model.scene.getObjectsByProperty("isMesh", true)) {
+            const sampler = new MeshSurfaceSampler(mesh).build();
+            const point = new Vector3();
+            // hard limit number of points
+            for (let count = 0; count < pointMax; count++) {
+              // try a few times to place points
+              for (let tries = 0; tries < pointPlaceTries; tries++) {
+                // get random point on surface of mesh
+                sampler.sample(point);
+                mesh.localToWorld(point);
+                const newPoint = point.clone();
+
+                // if too close to another point, discard
+                if (points.some((p) => p.distanceTo(newPoint) < linkDist / 2))
+                  continue;
+                else {
+                  points.push(newPoint);
+                  break;
+                }
+              }
+            }
+          }
+
+          // add point shape to list
+          return { points, links: [] };
+        });
+
+        // get shape with least number of points
+        pointCount = Math.min(...shapes.map(({ points }) => points.length));
+
+        // process shape points
+        for (const { points } of shapes) {
+          // randomly remove points to make all the same number
+          while (points.length > pointCount)
+            points.splice(Math.floor(rand(0, points.length)), 1);
+          // sort points by position for nicer transitions
+          points.sort((a, b) => a.y - b.y || a.x - b.x || a.z - b.z);
+        }
+
+        // find points close together
+        for (const { points, links } of shapes)
+          for (let a = 0; a < points.length; a++)
+            for (let b = 0; b < points.length; b++)
+              if (a < b && points[a].distanceTo(points[b]) < linkDist)
+                links.push({ a: points[a].clone(), b: points[b].clone() });
+
+        // get shape with least number of links
+        linkCount = Math.min(...shapes.map(({ links }) => links.length));
+
+        // process shape links
+        for (const { links } of shapes) {
+          // randomly remove links to make all the same number
+          while (links.length > linkCount)
+            links.splice(Math.floor(rand(0, links.length)), 1);
+        }
+
+        // add extra points in background
+        const extraCount = pointCount;
+        const extraPoints = Array(extraCount)
+          .fill()
+          .map(() =>
+            new Vector3(gauss(), gauss(), gauss())
+              .normalize()
+              .multiplyScalar(rand(cameraDist - 0.5, cameraDist + 1))
+          );
+        shapes.forEach(
+          (shape) => (shape.points = shape.points.concat(extraPoints))
+        );
+        pointCount += extraCount;
+      };
+
+      // setup scene objects and animations
+      const initScene = () => {
+        // basic setup
+        scene.background = black;
+        camera.position.z = cameraDist;
+
+        // top level group for all scene objects
+        const group = new Group();
+        scene.add(group);
+
+        // spin group
+        group.rotation.x = -Math.PI / 8;
+        gsap
+          .timeline({
+            repeat: -1,
+            yoyo: true,
+            defaults: { duration: spinDuration * 2, ease: "sine.inOut" },
+          })
+          .to(group.rotation, { x: Math.PI / 8 })
+          .seek(spinDuration);
+        gsap.timeline({ repeat: -1 }).to(group.rotation, {
+          duration: spinDuration,
+          ease: "linear",
+          y: 2 * Math.PI,
+        });
+
+        // create geometry and material for points
+        const pointGeometry = new IcosahedronGeometry(pointSize, pointDetail);
+        const pointMaterial = new MeshBasicMaterial();
+        pointObject = new InstancedMesh(
+          pointGeometry,
+          pointMaterial,
+          pointCount
+        );
+
+        // create geometry and material for links
+        const linkGeometry = new LineSegmentsGeometry();
+        linkGeometry.setPositions(Array(linkCount * 6).fill(0));
+        linkGeometry.setColors(Array(linkCount * 6).fill(0));
+        const linkMaterial = new LineMaterial({
+          opacity: 0.1,
+          linewidth: pointSize,
+          worldUnits: true,
+          vertexColors: true,
+          transparent: true,
+        });
+        linkObject = new LineSegments2(linkGeometry, linkMaterial);
+        linkObject.computeLineDistances();
+
+        // add to scene
+        group.add(pointObject);
+        group.add(linkObject);
+
+        // init point data
+        points = Array(pointCount)
+          .fill()
+          .map((_, index) => ({
+            position: shapes[0].points[index],
+            color: purple.clone(),
+            scale: new Vector3(1, 1, 1),
+          }));
+
+        // animate points
+        for (let point = 0; point < pointCount; point++) {
+          const { position, color, scale } = points[point];
+
+          // morph position between shapes
+          const morph = gsap.timeline({ repeat: -1 });
+          for (let shape = 1; shape < shapes.length + 1; shape++)
+            morph.to(position, {
+              delay: shapeDuration,
+              duration: shapeDuration / 2,
+              ease: "power1.inOut",
+              ...shapes[shape % shapes.length].points[point],
+            });
+
+          // pulse color
+          gsap
+            .timeline({ repeat: -1, yoyo: true })
+            .delay(colorStagger * position.y)
+            .to(color, { duration: colorDuration, ease: "linear", ...blue })
+            .to(color, { duration: colorDuration, ease: "linear", ...green });
+
+          // create highlight animation
+          const normal = new Vector3(1, 1, 1);
+          const bulge = normal.clone().multiplyScalar(highlightBulge);
+          pointHighlights.push(
+            gsap
+              .timeline({ paused: true })
+              .to(color, { duration: 0, ...orange })
+              .to(scale, { duration: 0, ...bulge }, "<")
+              .to(color, { duration: highlightDuration, ...red })
+              .to(scale, { duration: highlightDuration, ...normal }, "<")
+          );
+        }
+
+        // init link data
+        links = Array(linkCount)
+          .fill()
+          .map((_, index) => ({
+            ...shapes[0].links[index],
+            color: purple.clone(),
+            alpha: { value: 10 },
+          }));
+
+        // animate links
+        for (let link = 0; link < linkCount; link++) {
+          const { a, b, color, alpha } = links[link];
+
+          // morph position between shapes
+          const morph = gsap.timeline({ repeat: -1 });
+          for (let shape = 1; shape < shapes.length + 1; shape++)
+            morph
+              .to(a, {
+                delay: shapeDuration,
+                duration: shapeDuration / 2,
+                ...shapes[shape % shapes.length].links[link].a,
+              })
+              .to(
+                b,
+                {
+                  duration: shapeDuration / 2,
+                  ...shapes[shape % shapes.length].links[link].b,
+                },
+                "<"
+              );
+
+          // pulse color
+          gsap
+            .timeline({ repeat: -1, yoyo: true })
+            .delay(colorStagger * a.y)
+            .to(color, { duration: colorDuration, ease: "linear", ...blue })
+            .to(color, { duration: colorDuration, ease: "linear", ...green });
+
+          // create highlight animation
+          linkHighlights.push(
+            gsap
+              .timeline()
+              .to(alpha, { duration: highlightDuration * 2, value: 0.5 })
+          );
+        }
+      };
+
+      // time taken to render frame in ms
+      let frameTime = 0;
+
+      // animation frame
+      const animationFrame = () => {
+        const startFrame = window.performance.now();
+
+        // get world coordinates of pointer
+        // https://stackoverflow.com/questions/13055214
+        const pointerA = camera.position
+          .clone()
+          .add(pointer.clone().unproject(camera).sub(camera.position));
+
+        // start from pointer coordinates and point outward from camera into scene
+        const pointerB = pointerA
+          .clone()
+          .add(pointerA.clone().sub(camera.position).normalize());
+
+        // pointer ray
+        const pointerAB = pointerB.clone().sub(pointerA);
+
+        // util objects
+        const matrix = new Matrix4();
+        const quaternion = new Quaternion();
+
+        // update points
+        for (let point = 0; point < points.length; point++) {
+          // get current animated prop values
+          const { position, color, scale } = points[point];
+
+          // set position and scale
+          matrix.compose(position, quaternion, scale);
+          pointObject.setMatrixAt(point, matrix);
+
+          // set color
+          pointObject.setColorAt(point, color);
+
+          // get distance from point to pointer ray
+          // https://math.stackexchange.com/a/1905581/1098483
+          let dist =
+            pointObject
+              .localToWorld(position.clone())
+              .sub(pointerA)
+              .cross(pointerAB)
+              .length() / pointerAB.length();
+
+          // animate if close
+          if (dist < linkDist) pointHighlights[point].restart();
+        }
+
+        // update links
+        for (let link = 0; link < links.length; link++) {
+          // get current animated prop values
+          const { a, b, color, alpha } = links[link];
+
+          // set position
+          linkObject.geometry.attributes.instanceStart.setXYZ(
+            link,
+            ...a.toArray()
+          );
+          linkObject.geometry.attributes.instanceEnd.setXYZ(
+            link,
+            ...b.toArray()
+          );
+
+          // set color
+          const col = [color.r, color.g, color.b].map((c) => c * alpha.value);
+          linkObject.geometry.attributes.instanceColorStart.setXYZ(
+            link,
+            ...col
+          );
+          linkObject.geometry.attributes.instanceColorEnd.setXYZ(link, ...col);
+
+          // get distance from point to pointer ray
+          // https://math.stackexchange.com/a/1905581/1098483
+          let dist =
+            linkObject
+              .localToWorld(mid(a, b).clone())
+              .sub(pointerA)
+              .cross(pointerAB)
+              .length() / pointerAB.length();
+
+          // animate if close
+          if (dist < linkDist * 2) linkHighlights[link].restart();
+        }
+
+        // flag that updates needed
+        pointObject.instanceMatrix.needsUpdate = true;
+        pointObject.instanceColor.needsUpdate = true;
+        linkObject.geometry.attributes.instanceStart.needsUpdate = true;
+        linkObject.geometry.attributes.instanceEnd.needsUpdate = true;
+        linkObject.geometry.attributes.instanceColorStart.needsUpdate = true;
+        linkObject.geometry.attributes.instanceColorEnd.needsUpdate = true;
+
+        // render
+        composer.render();
+
+        frameTime = window.performance.now() - startFrame;
+      };
+
+      // very rough guess at real world screen size from number of screen pixels
+      const screenSize = Math.max(window.screen.width, window.screen.height);
+
+      // super/sub-sampling ratio
+      const sampling = screenSize / 1000;
+
+      // update render resolution/pixel density
+      const updateResolution = () => {
+        renderer.setPixelRatio(window.devicePixelRatio * sampling);
+        composer.setPixelRatio(window.devicePixelRatio * sampling);
+      };
+
+      // log fps
+      window.setInterval(() => {
+        console.debug(
+          `${frameTime.toFixed(2)} ms`,
+          `${(1000 / frameTime).toFixed(0)} fps`
+        );
+      }, 1000);
+
+      // resize canvas
+      const resize = () => {
+        camera.aspect = canvas.clientWidth / canvas.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+        composer.setSize(canvas.clientWidth, canvas.clientHeight);
+        renderer.setPixelRatio(window.devicePixelRatio * sampling);
+        composer.setPixelRatio(window.devicePixelRatio * sampling);
+      };
+      resize();
+      window.addEventListener("resize", resize);
+
+      // reset view
+      canvas.addEventListener("dblclick", () => {
+        controls.reset();
+        camera.position.z = cameraDist;
+      });
+
+      // track pointer
+      const pointer = new Vector3(99999, 99999, 99999);
+      const onPointer = (event) => {
+        const x = event.clientX;
+        const y = event.clientY;
+
+        // viewport coords to "normalized device coords"
+        const { left, top, width, height } =
+          event.currentTarget.getBoundingClientRect();
+        pointer.x = -1 + 2 * ((x - left) / width);
+        pointer.y = 1 - 2 * ((y - top) / height);
+      };
+      canvas.addEventListener("pointermove", onPointer);
+
+      // util funcs
+      const rand = (min = 0, max = 1) => min + Math.random() * (max - min);
+      const gauss = () =>
+        Math.sqrt(-2.0 * Math.log(rand())) * Math.cos(2.0 * Math.PI * rand());
+      const mid = (a, b, percentage = 0.5) => {
+        let dir = b.clone().sub(a);
+        const len = dir.length();
+        dir.normalize().multiplyScalar(len * percentage);
+        return a.clone().add(dir);
+      };
+
+      // cache expensive calculations in storage
+      const storageKey = "shapes";
+      const loadCache = () => {
+        try {
+          const entry = window.localStorage.getItem(storageKey);
+          if (!entry) throw Error();
+          const data = JSON.parse(entry);
+          const toVector = (coords) => new Vector3(...coords);
+          shapes = data.map(({ points, links }) => ({
+            points: points.map(toVector),
+            links: links.map(([a, b]) => ({ a: toVector(a), b: toVector(b) })),
+          }));
+          pointCount = data[0].points.length;
+          linkCount = data[0].links.length;
+          return true;
+        } catch (error) {
+          return false;
+        }
+      };
+      const saveCache = () => {
+        try {
+          const round = (value) => Number(value.toFixed(2));
+          const fromVector = (point) => point.toArray().map(round);
+          const data = JSON.stringify(
+            shapes.map(({ points, links }) => ({
+              points: points.map(fromVector),
+              links: links.map(({ a, b }) => [fromVector(a), fromVector(b)]),
+            }))
+          );
+          window.localStorage.setItem(storageKey, data);
+          return true;
+        } catch (error) {
+          return false;
+        }
+      };
+
+      // entrypoint
+      const start = async () => {
+        if (!loadCache()) {
+          await loadShapes();
+          saveCache();
+        }
+        initScene();
+        gsap.ticker.add(animationFrame);
+      };
+      start();
+    </script>
+  </body>
+</html>
