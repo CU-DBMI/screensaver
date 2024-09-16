@@ -1,6 +1,6 @@
 # Screensaver
 
-[⭐️ **OPEN THE SCREENSAVER** ⭐️](https://cu-dbmi.github.io/screensaver) and fullscreen your browser!
+[⭐️ **OPEN THE SCREENSAVER** ⭐️](https://cu-dbmi.github.io/screensaver) and [fullscreen your browser](https://www.google.com/search?q=how+to+fullscreen+my+browser)!
 
 ### Controls
 
@@ -22,7 +22,7 @@ Example:
 ### Other customization
 
 Shapes, colors, and other settings customizable in source code.
-Time-consuming calculations are cached indefinitely in `localStorage`, so clear this if making changes code.
+Time-consuming calculations are cached indefinitely in `localStorage`, so clear this if making changes.
 
 ### Acknowledgements
 
