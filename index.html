@@ -145,9 +145,10 @@
       const overlay = document.querySelector("#overlay");
 
       // create text overlay
-      const lines = (
-        new URL(window.location.href).searchParams.get("text") ?? ""
-      )
+      const lines = window
+        .decodeURIComponent(
+          new URL(window.location.href).searchParams.get("text") ?? ""
+        )
         ?.split("\\n")
         ?.map((line) => line.trim());
       const ns = "http://www.w3.org/2000/svg";
