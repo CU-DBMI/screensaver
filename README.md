@@ -22,7 +22,6 @@ Example:
 ### Other customization
 
 Shapes, colors, and other settings customizable in source code.
-Time-consuming calculations are cached indefinitely in `localStorage`, so clear this if making changes.
 
 ### Acknowledgements
 

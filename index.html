@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
   <head>
     <meta charset="UTF-8" />
@@ -6,54 +6,53 @@
 
     <title>Screensaver</title>
 
-    <script
-      src="https://unpkg.com/gsap@3.12.5/dist/gsap.min.js"
-      crossorigin="anonymous"
-    ></script>
-
     <script type="importmap">
       {
         "imports": {
           "three": "https://unpkg.com/three@0.153.0/build/three.module.js",
-          "three/addons/": "https://unpkg.com/three@0.153.0/examples/jsm/"
+          "three/addons/": "https://unpkg.com/three@0.153.0/examples/jsm/",
+          "gsap": "https://cdn.jsdelivr.net/npm/gsap@3.12.5/+esm",
+          "opentype": "https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/+esm"
         }
       }
     </script>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300&display=swap"
-      rel="stylesheet"
-    />
-
     <style>
+      @font-face {
+        font-family: "Font";
+        font-weight: 300;
+        font-display: swap;
+        src: url(font.woff) format("woff");
+      }
+
       * {
         box-sizing: border-box;
-        font-family: "Lato", sans-serif;
+        font-family: "Font", sans-serif;
       }
 
       body {
         margin: 0;
+        display: grid;
+        place-items: center;
+        width: 100vw !important;
+        height: 100vh !important;
       }
 
       #canvas {
         position: absolute;
         inset: 0;
-        width: calc(100vw) !important;
-        height: calc(100vh) !important;
+        width: 100% !important;
+        height: 100% !important;
       }
 
       #overlay {
         display: flex;
         flex-direction: column;
-        position: absolute;
-        left: 50%;
-        top: 50%;
-        transform: translate(-50%, -50%);
+        gap: 20px;
         width: 100%;
-        max-width: 400px;
-        padding: 20px;
+        max-width: 600px;
+        padding: 60px;
+        z-index: 1;
         pointer-events: none;
         user-select: none;
       }
@@ -61,6 +60,7 @@
       #overlay svg {
         width: 100%;
         fill: white;
+        overflow: visible;
       }
     </style>
   </head>
@@ -111,8 +111,11 @@
       import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
       import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
       import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+      import gsap from "gsap";
+      import { load } from "opentype";
 
       // settings
+      const cache = true; // whether to cache time-consuming model pre-processing (clear if tweaking source code)
       const shapeFiles = ["brain.glb", "dna.glb", "flask.glb"]; // low-poly, small 3d models
       const cameraFov = 60; // camera field of view
       const cameraDist = 3; // camera dist from origin
@@ -141,31 +144,26 @@
       const canvas = document.querySelector("#canvas");
       const overlay = document.querySelector("#overlay");
 
-      // fit svg to contents after delay
-      const fitSvg = (svg, delay) =>
-        window.setTimeout(() => {
-          const { x, y, width, height } = svg.getBBox();
-          svg.setAttribute("viewBox", [x, y, width, height].join(" "));
-        }, delay);
-
       // create text overlay
       const lines = (
         new URL(window.location.href).searchParams.get("text") ?? ""
       )
         ?.split("\\n")
         ?.map((line) => line.trim());
-
       const ns = "http://www.w3.org/2000/svg";
+      const font = await load("font.woff");
+      const getSize = (text) => ctx.measureText(text);
       for (const line of lines) {
         const svg = document.createElementNS(ns, "svg");
         const text = document.createElementNS(ns, "text");
         text.innerHTML = line;
+        text.setAttribute("style", "font-size: 12px");
+        const { x1, x2, y1, y2 } = font
+          .getPath(line, 0, 0, 12)
+          .getBoundingBox();
+        svg.setAttribute("viewBox", [x1, y1, x2 - x1, y2 - y1].join(" "));
         svg.append(text);
         overlay.append(svg);
-        // fit a few times until bbox settles
-        fitSvg(svg, 0);
-        fitSvg(svg, 1000);
-        fitSvg(svg, 2000);
       }
 
       // main three.js objects
@@ -268,7 +266,7 @@
           while (points.length > pointCount)
             points.splice(Math.floor(rand(0, points.length)), 1);
           // sort points by position for nicer transitions
-          points.sort((a, b) => a.y - b.y || a.x - b.x || a.z - b.z);
+          points.sort((a, b) => a.y - b.y);
         }
 
         // find points close together
@@ -611,6 +609,7 @@
 
       // cache expensive calculations in storage
       const storageKey = "shapes";
+      if (!cache) window.localStorage.clear();
       const loadCache = () => {
         try {
           const entry = window.localStorage.getItem(storageKey);
