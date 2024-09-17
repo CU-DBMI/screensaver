@@ -31,11 +31,13 @@
       }
 
       body {
-        margin: 0;
         display: grid;
         place-items: center;
         width: 100vw !important;
         height: 100vh !important;
+        margin: 0;
+        color: white;
+        background: black;
       }
 
       #canvas {
@@ -48,10 +50,11 @@
       #overlay {
         display: flex;
         flex-direction: column;
-        gap: 20px;
+        gap: 30px;
         width: 100%;
         max-width: 600px;
         padding: 60px;
+        text-align: center;
         z-index: 1;
         pointer-events: none;
         user-select: none;
@@ -59,7 +62,7 @@
 
       #overlay svg {
         width: 100%;
-        fill: white;
+        fill: currentColor;
         overflow: visible;
       }
     </style>
@@ -116,16 +119,16 @@
 
       // settings
       const cache = true; // whether to cache time-consuming model pre-processing (clear if tweaking source code)
-      const shapeFiles = ["brain.glb", "dna.glb", "flask.glb"]; // low-poly, small 3d models
+      const modelFiles = ["brain.glb", "dna.glb", "flask.glb"]; // low-poly, small 3d models
       const cameraFov = 60; // camera field of view
       const cameraDist = 3; // camera dist from origin
       const spinDuration = 30; // scene spin duration in sec
       const shapeDuration = 3; // morph between model shapes every this many sec
       const pointMax = 1000; // max number of points to sample from each model mesh
+      const pointDist = 0.05; // min dist between points when placing and linking
       const pointPlaceTries = 10; // times to try sampling point far enough away from other points
       const pointSize = 0.005; // radius of point
-      const pointDetail = 0; // geometry detail of each point (int)
-      const linkDist = 0.1; // create link between points closer than this
+      const pointDetail = 1; // geometry detail of each point (int)
       const colorDuration = 1; // duration of each color in sec
       const colorStagger = 1; // amount of color change stagger
       const highlightDuration = 0.25; // duration of highlight animation in sec
@@ -145,27 +148,28 @@
       const overlay = document.querySelector("#overlay");
 
       // create text overlay
-      const lines = window
-        .decodeURIComponent(
-          new URL(window.location.href).searchParams.get("text") ?? ""
-        )
-        ?.split("\\n")
-        ?.map((line) => line.trim());
-      const ns = "http://www.w3.org/2000/svg";
-      const font = await load("font.woff");
-      const getSize = (text) => ctx.measureText(text);
-      for (const line of lines) {
-        const svg = document.createElementNS(ns, "svg");
-        const text = document.createElementNS(ns, "text");
-        text.innerHTML = line;
-        text.setAttribute("style", "font-size: 12px");
-        const { x1, x2, y1, y2 } = font
-          .getPath(line, 0, 0, 12)
-          .getBoundingBox();
-        svg.setAttribute("viewBox", [x1, y1, x2 - x1, y2 - y1].join(" "));
-        svg.append(text);
-        overlay.append(svg);
-      }
+      const createOverlay = async () => {
+        const lines = window
+          .decodeURIComponent(
+            new URL(window.location.href).searchParams.get("text") ?? ""
+          )
+          ?.split("\\n")
+          ?.map((line) => line.trim());
+        const ns = "http://www.w3.org/2000/svg";
+        const font = await load("font.woff");
+        for (const line of lines) {
+          const svg = document.createElementNS(ns, "svg");
+          const text = document.createElementNS(ns, "text");
+          text.innerHTML = line;
+          text.setAttribute("style", "font-size: 12px");
+          const { x1, x2, y1, y2 } = font
+            .getPath(line, 0, 0, 12)
+            .getBoundingBox();
+          svg.setAttribute("viewBox", [x1, y1, x2 - x1, y2 - y1].join(" "));
+          svg.append(text);
+          overlay.append(svg);
+        }
+      };
 
       // main three.js objects
       const renderer = new WebGLRenderer({ canvas, alpha: true });
@@ -193,7 +197,7 @@
       composer.addPass(outputPass);
 
       // data objects
-      let shapes = { points: [], links: [] };
+      let shapes = [];
       let points = [];
       let pointCount = 0;
       let pointObject = new Object3D();
@@ -208,16 +212,16 @@
         // 3d model loader
         const loader = new GLTFLoader();
 
-        // shapes of points and links
-        shapes = (
-          await Promise.all(
-            shapeFiles.map(
-              (filename) =>
-                // load 3d model data
-                new Promise((resolve) => loader.load(filename, resolve))
-            )
+        // load 3d model data
+        const models = await Promise.all(
+          modelFiles.map(
+            (filename) =>
+              new Promise((resolve) => loader.load(filename, resolve))
           )
-        ).map((model, index) => {
+        );
+
+        // process models
+        for (const [modelIndex, model] of Object.entries(models)) {
           // center and scale model into -1 to 1 range bbox
           const box = new Box3().setFromObject(model.scene);
           const scale =
@@ -231,7 +235,17 @@
 
           // get random points on surfaces of model
           const points = [];
-          for (const mesh of model.scene.getObjectsByProperty("isMesh", true)) {
+          const meshes = model.scene.getObjectsByProperty("isMesh", true);
+          for (const [meshIndex, mesh] of Object.entries(meshes)) {
+            // log progress
+            overlay.innerHTML = [
+              `Model ${+modelIndex + 1} of ${models.length}`,
+              `${((100 * (+meshIndex + 1)) / meshes.length).toFixed(0)}%`,
+            ].join("<br>");
+            // break synchronous execution for dom update
+            await new Promise((resolve) => window.setTimeout(resolve));
+
+            // create sampler to get random points on model
             const sampler = new MeshSurfaceSampler(mesh).build();
             const point = new Vector3();
             // hard limit number of points
@@ -244,7 +258,7 @@
                 const newPoint = point.clone();
 
                 // if too close to another point, discard
-                if (points.some((p) => p.distanceTo(newPoint) < linkDist / 2))
+                if (points.some((p) => p.distanceTo(newPoint) < pointDist))
                   continue;
                 else {
                   points.push(newPoint);
@@ -255,8 +269,11 @@
           }
 
           // add point shape to list
-          return { points, links: [] };
-        });
+          shapes.push({ points, links: [] });
+        }
+
+        // reset overlay
+        overlay.innerHTML = "";
 
         // get shape with least number of points
         pointCount = Math.min(...shapes.map(({ points }) => points.length));
@@ -270,22 +287,20 @@
           points.sort((a, b) => a.y - b.y);
         }
 
-        // find points close together
+        // link points that are close together
         for (const { points, links } of shapes)
           for (let a = 0; a < points.length; a++)
             for (let b = 0; b < points.length; b++)
-              if (a < b && points[a].distanceTo(points[b]) < linkDist)
+              if (a < b && points[a].distanceTo(points[b]) < pointDist * 2)
                 links.push({ a: points[a].clone(), b: points[b].clone() });
 
         // get shape with least number of links
         linkCount = Math.min(...shapes.map(({ links }) => links.length));
 
-        // process shape links
-        for (const { links } of shapes) {
-          // randomly remove links to make all the same number
+        // randomly remove links to make all the same number
+        for (const { links } of shapes)
           while (links.length > linkCount)
             links.splice(Math.floor(rand(0, links.length)), 1);
-        }
 
         // add extra points in background
         const extraCount = pointCount;
@@ -492,7 +507,7 @@
               .length() / pointerAB.length();
 
           // animate if close
-          if (dist < linkDist) pointHighlights[point].restart();
+          if (dist < pointDist) pointHighlights[point].restart();
         }
 
         // update links
@@ -528,7 +543,7 @@
               .length() / pointerAB.length();
 
           // animate if close
-          if (dist < linkDist * 2) linkHighlights[link].restart();
+          if (dist < pointDist * 2) linkHighlights[link].restart();
         }
 
         // flag that updates needed
@@ -558,12 +573,12 @@
       };
 
       // log fps
-      window.setInterval(() => {
-        console.debug(
-          `${frameTime.toFixed(2)} ms`,
-          `${(1000 / frameTime).toFixed(0)} fps`
-        );
-      }, 1000);
+      // window.setInterval(() => {
+      //   console.debug(
+      //     `${frameTime.toFixed(2)} ms`,
+      //     `${(1000 / frameTime).toFixed(0)} fps`
+      //   );
+      // }, 1000);
 
       // resize canvas
       const resize = () => {
@@ -652,6 +667,7 @@
           saveCache();
         }
         initScene();
+        createOverlay();
         gsap.ticker.add(animationFrame);
       };
       start();
