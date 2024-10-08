@@ -75,31 +75,17 @@
 
     <script type="module">
       import {
-        AmbientLight,
-        ArrowHelper,
-        BackSide,
         Box3,
-        BufferAttribute,
-        BufferGeometry,
         Color,
-        DoubleSide,
-        DynamicDrawUsage,
         Group,
-        HemisphereLight,
         IcosahedronGeometry,
         InstancedMesh,
-        Line,
-        LineBasicMaterial,
         Matrix4,
-        Mesh,
         MeshBasicMaterial,
         Object3D,
         PerspectiveCamera,
-        PointLight,
         Quaternion,
-        Raycaster,
         Scene,
-        SphereGeometry,
         Vector2,
         Vector3,
         WebGLRenderer,
@@ -560,18 +546,6 @@
         frameTime = window.performance.now() - startFrame;
       };
 
-      // very rough guess at real world screen size from number of screen pixels
-      const screenSize = Math.max(window.screen.width, window.screen.height);
-
-      // super/sub-sampling ratio
-      const sampling = screenSize / 1000;
-
-      // update render resolution/pixel density
-      const updateResolution = () => {
-        renderer.setPixelRatio(window.devicePixelRatio * sampling);
-        composer.setPixelRatio(window.devicePixelRatio * sampling);
-      };
-
       // log fps
       // window.setInterval(() => {
       //   console.debug(
@@ -579,6 +553,12 @@
       //     `${(1000 / frameTime).toFixed(0)} fps`
       //   );
       // }, 1000);
+
+      // very rough guess at real world screen size from number of screen pixels
+      const screenSize = Math.max(window.screen.width, window.screen.height);
+
+      // super/sub-sampling ratio
+      const sampling = screenSize / 1000;
 
       // resize canvas
       const resize = () => {
